@@ -1,0 +1,54 @@
+name: protected-trial
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: ['trial/**']
+
+permissions:
+  contents: read
+
+jobs:
+  marker_check:
+    name: trial-marker-check
+    runs-on: ubuntu-24.04
+    env:
+      TRIAL_BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate this trial marker
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          branch = os.environ['TRIAL_BRANCH']
+          if not branch.startswith('trial/'):
+              raise SystemExit('Unexpected trial branch')
+          trial_id = branch[len('trial/'):]
+          if not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,80}', trial_id):
+              raise SystemExit('Invalid trial ID')
+          path = Path('protected/trials') / f'{trial_id}.json'
+          if path.is_symlink() or not path.is_file():
+              raise SystemExit('Trial marker must be a regular file')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          if not isinstance(data, dict) or set(data) != {'trial_id', 'revision', 'payload'}:
+              raise SystemExit('Unexpected marker schema')
+          revision = data['revision']
+          if type(revision) is not int or revision not in (0, 1):
+              raise SystemExit('Unexpected revision')
+          expected = {
+              'trial_id': trial_id,
+              'revision': revision,
+              'payload': f'fixture revision {revision}',
+          }
+          if data != expected:
+              raise SystemExit('Marker content does not match its trial')
+          print(f'Marker schema passed: {trial_id}, revision {revision}')
+          PY
